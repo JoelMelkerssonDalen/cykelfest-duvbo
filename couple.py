@@ -8,10 +8,11 @@ class Course(Enum):
 
 @dataclass
 class Person:
+    person_id: str = field(init=False, default="")
     name: str
     dietary_requirements: str | None = None
     schedule: dict[Course, int] = field(default_factory=dict) # Course -> couple_id
-    
+    met: set[str] = field(default_factory=set) 
 
 @dataclass
 class Couple:
@@ -20,4 +21,9 @@ class Couple:
     person_b: Person
     address: str
     hosting: Course | None = None
+    hosted_last_year: Course | None = None
     capacity: int = 4
+    
+    def __post_init__(self):
+        self.person_a.person_id = f"{self.couple_id}a"
+        self.person_b.person_id = f"{self.couple_id}b"
