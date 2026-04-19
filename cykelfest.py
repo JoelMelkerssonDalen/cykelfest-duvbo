@@ -3,6 +3,13 @@ from dummy_data import load_dummy_data
 from dataclasses import dataclass, field
 import random
 
+def get_partner(person: Person, couples: dict[int, Couple]) -> Person:
+    
+    if couples[person.couple_id].person_a == person:
+        return couples[person.couple_id].person_b   
+    
+    return couples[person.couple_id].person_a
+
 def add_couple(couples: dict[int, Couple], new_couple: Couple) -> dict[int,Couple]:
     couples[new_couple.couple_id] = new_couple
     return couples
@@ -62,17 +69,27 @@ def validate(couples: dict[int, Couple], assigned: dict[Course, dict[int, list[P
     else:
         print("All checks passed!")
 
+def met_updates(person: Person, table: list[Person], couples: dict[int, Couple], host_id: int) -> None:
+    
+    # For each person already on the table: add person.person_id to their met set
+    # Add every table member's person_id to person.met
+    # Add both hosts' person_ids to person.met
+    # Add person.person_id to both hosts' met sets
+    
+    for p in table:
+        p.met.add(person.person_id)
+        person.met.add(p.person_id)
+        
+    person.met.add(couples[host_id].person_a.person_id)
+    person.met.add(couples[host_id].person_b.person_id)
+    couples[host_id].person_a.met.add(person.person_id)
+    couples[host_id].person_b.met.add(person.person_id)
+
 def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
 
-    def met_before(table: list[Person], met: set[Person]) -> bool:
+    def met_before(table: list[Person], met: set[str]) -> bool:
         
-        for t in table:
-            if len(met) == 0:
-                return False
-            if t in met:
-                return True
-            
-        return False
+        return any([p.person_id in met for p in table])
 
     assigned: dict[Course, dict[int, list[Person]]] = {course: {} for course in Course} # Course -> host couple_id -> visiting persons 
     
@@ -107,17 +124,17 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
         #     a) Table isn't full (< capacity)
         #     b) Their partner isn't already at that table
         #     c) (courses 2+) No one at that table is in their met set
-        for i in not_hosting_person:
-           for c in hosting_couple:
-               if len(assigned[course][c.couple_id]) < c.capacity and i not in assigned[course][c.couple_id] and not met_before(assigned[course][c.couple_id], i.met): 
-                    assigned[course][c.couple_id].append(i)
-                    i.schedule[course] = c.couple_id
-                    print(f"Individual: {i.name} going to couple: {c.couple_id} for course: {c.hosting}")
-                    # i.met.add(c.person_a)
-                    # i.met.add(c.person_b)
-        assigned[Course.STARTER][1] = couples[1].person_a
-        print(assigned[Course.STARTER][1])
-
+        for person in not_hosting_person:
+           for couple in hosting_couple:
+               table = assigned[course][couple.couple_id]
+               not_full = len(table) < couple.capacity
+               partner_not_there = get_partner(person, couples).person_id not in [p.person_id for p in table]
+               no_prior_meetings = not met_before(table, person.met)
+               if not_full and partner_not_there and no_prior_meetings:
+                    met_updates(person, table, couples, couple.couple_id)
+                    table.append(person)
+                    break
+    
     # call to validate
     validate(couples, assigned)
 

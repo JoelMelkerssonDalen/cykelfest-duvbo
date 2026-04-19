@@ -8,7 +8,8 @@ class Course(Enum):
 
 @dataclass
 class Person:
-    person_id: str = field(init=False, default="")
+    person_id: str = field(init=False, default="") # unique identifer for the person, set in couple
+    couple_id: int = field(init=False, default=-1) # unique identifer for the couple the person is part of, set in couple
     name: str
     dietary_requirements: str | None = None
     schedule: dict[Course, int] = field(default_factory=dict) # Course -> couple_id
@@ -28,3 +29,5 @@ class Couple:
     def __post_init__(self):
         self.person_a.person_id = f"{self.couple_id}a"
         self.person_b.person_id = f"{self.couple_id}b"
+        self.person_a.couple_id = self.couple_id
+        self.person_b.couple_id = self.couple_id
