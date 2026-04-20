@@ -55,6 +55,14 @@ def validate(couples: dict[int, Couple], assigned: dict[Course, dict[int, list[P
                 if partner_id in visitor_ids:
                     errors.append(f"{course.name} table {host_id}: partners {person.person_id} and {partner_id} at same table")
 
+            # Check that everyone at a table have everyone else in their met set
+            at_table = visitors + [host.person_a, host.person_b]
+            for person in at_table:
+                for other_person in [p for p in at_table if p != person]:
+                    if person.person_id not in other_person.met:
+                        errors.append(f"{course.name} table {host_id}: {person.person_id} not in {other_person.person_id} met set")
+           
+           
     # Check no two individuals meet more than once
     for couple in couples.values():
         for person in [couple.person_a, couple.person_b]:
@@ -100,6 +108,8 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
     #     a) Table isn't full (< capacity)
     #     b) Their partner isn't already at that table
     #     c) (courses 2+) No one at that table is in their met set
+    
+    # Finish by populating all hosts guest sets and validating assignments
 
     for course in Course:        
         # build list of all individuals not hosting that course
@@ -117,8 +127,10 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
         random.shuffle(hosting_couple)
 
         # additional step - initilizing inner dicts
-        for c in hosting_couple:
-            assigned[course][c.couple_id] = []
+        for couple in hosting_couple:
+            assigned[course][couple.couple_id] = []
+            couple.person_a.met.add(couple.person_b.person_id)
+            couple.person_b.met.add(couple.person_a.person_id)
 
         # 3. For each individual, assign to a host table where:
         #     a) Table isn't full (< capacity)
@@ -133,7 +145,12 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
                if not_full and partner_not_there and no_prior_meetings:
                     met_updates(person, table, couples, couple.couple_id)
                     table.append(person)
+                    person.schedule[course] = couple.couple_id
                     break
+    
+        # adding visitors to hosts guest set
+        for couple in hosting_couple:
+            couple.guests = assigned[course][couple.couple_id]
     
     # call to validate
     validate(couples, assigned)
@@ -166,11 +183,17 @@ def print_hosting_schedules(couples: dict[int, Couple]) -> None:
     # Course: [Starter, Main, Dessert]
     # Guests: [Person A (any dietary req.), Person B, Person C, Person D] 
     
+    course_names = {Course.STARTER: "Förrätt", Course.MAIN: "Varmrätt", Course.DESSERT: "Efterrätt"}
+    
     # Q. Should output be in ascending couple id order? 
     for couple in couples.values():
-        print(f"---- COUPLE {couple.couple_id} ----\n")
-        print(f"Course: {couple.hosting}")
-        print(f"Guests: {couple.guests}")
+        everyone = couple.guests + [couple.person_a, couple.person_b]
+        print(f"---- PAR {couple.couple_id} ----")
+        print(f"Värdar: {couple.person_a.name} och {couple.person_b.name}")
+        print(f"Måltid: {course_names[couple.hosting]}")
+        print(f"Adress: {couple.address}")
+        print(f"Gäster: {', '.join(p.name for p in couple.guests)}")
+        print(f"Specialkost: {', '.join(p.name + " (" + p.dietary_requirements + ")" for p in everyone if p.dietary_requirements)}\n\n")
 
 def print_individual_schedules(couples: dict[int, Couple]) -> None:
 
@@ -188,12 +211,30 @@ def print_individual_schedules(couples: dict[int, Couple]) -> None:
         print(f"---- {couple.person_a.name} ----\n")
         print(f"Schedule: {couple.person_a.schedule}")
 
+def print_stats(couples: dict[int, Couple]) -> None:
+    course_names = {Course.STARTER: "Förrätt", Course.MAIN: "Varmrätt", Course.DESSERT: "Efterrätt"}
+
+    print("\n---- STATISTIK ----")
+
+    print(f"\n{'Bord':<25} {'Måltid':<12} {'Gäster':>6}")
+    print("-" * 45)
+    for couple in couples.values():
+        label = f"Par {couple.couple_id} ({couple.person_a.name} & {couple.person_b.name})"
+        print(f"{label:<25} {course_names[couple.hosting]:<12} {len(couple.guests):>6}")
+
+    print(f"\n{'Person':<20} {'Möten':>6} {'Par besökta':>12}")
+    print("-" * 40)
+    for couple in couples.values():
+        for person in [couple.person_a, couple.person_b]:
+            print(f"{person.name:<20} {len(person.met):>6} {len(person.schedule):>12}")
+
 def output(couples: dict[int, Couple]) -> None:
 
-    # Calling each different type of output function 
+    # Calling each different type of output function
     print_overall_schedule(couples)
     print_hosting_schedules(couples)
     print_individual_schedules(couples)
+    print_stats(couples)
     
 def main():
     all_couples: dict[int, Couple] = {}
@@ -202,7 +243,7 @@ def main():
     
     all_couples = assign_hosting(all_couples)
     all_couples = assign_attendees(all_couples)
-    # output(all_couples)
+    output(all_couples)
 
     count: dict[Course, int] = {Course.STARTER: 0, Course.MAIN: 0, Course.DESSERT: 0}
     for couple in list(all_couples.values()):

@@ -24,7 +24,7 @@ class Couple:
     hosting: Course | None = None
     hosted_last_year: Course | None = None
     capacity: int = 4
-    guests: set[Person] = field(default_factory=set) 
+    guests: list[Person] = field(default_factory=list) 
     
     def __post_init__(self):
         self.person_a.person_id = f"{self.couple_id}a"
