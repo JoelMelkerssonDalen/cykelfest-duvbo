@@ -92,70 +92,156 @@ def met_updates(person: Person, table: list[Person], couples: dict[int, Couple],
     person.met.add(couples[host_id].person_b.person_id)
     couples[host_id].person_a.met.add(person.person_id)
     couples[host_id].person_b.met.add(person.person_id)
+    
+def met_undo(person: Person, table: list[Person], couples: dict[int, Couple], host_id: int) -> None:
+    
+    for p in table:
+        p.met.remove(person.person_id)
+        person.met.remove(p.person_id)
+    
+    person.met.remove(couples[host_id].person_a.person_id)
+    person.met.remove(couples[host_id].person_b.person_id)
+    couples[host_id].person_a.met.remove(person.person_id)
+    couples[host_id].person_b.met.remove(person.person_id)
 
 def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
-
+    
     def met_before(table: list[Person], met: set[str]) -> bool:
-        
+    
         return any([p.person_id in met for p in table])
-
+    
+    def minimum_available_values_sort(persons: list[Person], hosts: list[Couple]) -> None:
+        # For each person, count the number of avilable tables 
+        available_tables_per_person: list[tuple[Person, int]] = [] # list of each persons number of available tables
+        for p in persons:
+            available_tables_per_person.append((p, len([h for h in hosts if h.person_a.person_id not in p.met and h.person_b.person_id not in p.met])))
+        
+        # Sort persons based on numbered order in available tables per person 
+        available_tables_per_person.sort(key=lambda x: x[1])
+        persons[:] = [t[0] for t in available_tables_per_person]
+    
+    def backtrack(persons: list[Person], index: int, tables: dict[int, list[Person]], hosting_couples: list[Couple], couples: dict[int, Couple], course: Course) -> bool:
+        if index == len(persons):
+            return True
+        
+        for couple in hosting_couples:
+            table = tables[couple.couple_id]
+            not_full = len(table) < couple.capacity
+            partner_not_there = get_partner(persons[index], couples).person_id not in [p.person_id for p in table]
+            no_prior_meetings = not met_before(table, persons[index].met)
+            if not_full and partner_not_there and no_prior_meetings:
+                met_updates(persons[index], table, couples, couple.couple_id)
+                table.append(persons[index])
+                persons[index].schedule[course] = couple.couple_id
+                if backtrack(persons, index+1, tables, hosting_couples, couples, course):
+                    return True
+                else:
+                    table.remove(persons[index])
+                    met_undo(persons[index], table, couples, couple.couple_id)
+                    del persons[index].schedule[course]
+                    
+        return False
+        
     assigned: dict[Course, dict[int, list[Person]]] = {course: {} for course in Course} # Course -> host couple_id -> visiting persons 
-    
-    # for each course
-    # 1. Build list of all individuals not hosting that course
-    # 2. Shuffle it
-    # 3. For each individual, assign to a host table where:
-    #     a) Table isn't full (< capacity)
-    #     b) Their partner isn't already at that table
-    #     c) (courses 2+) No one at that table is in their met set
-    
-    # Finish by populating all hosts guest sets and validating assignments
 
-    for course in Course:        
-        # build list of all individuals not hosting that course
-        all = list(couples.values())
-        not_hosting_person = list() # list of Persons not hosting the course
-        hosting_couple = list() # list of Couples hosting that course
-        for c in all:
+    for course in Course:
+        # 1. build list of all individuals not hosting that course
+        not_hosting_persons = list() # list of Persons not hosting the course
+        hosting_couples = list() # list of Couples hosting that course
+        for c in couples.values():
             if c.hosting != course:
-                not_hosting_person.append(c.person_a)
-                not_hosting_person.append(c.person_b)
+                not_hosting_persons.append(c.person_a)
+                not_hosting_persons.append(c.person_b)
             else:
-                hosting_couple.append(c)
+                hosting_couples.append(c)
+                
         # 2. Shuffle it
-        random.shuffle(not_hosting_person)
-        random.shuffle(hosting_couple)
-
-        # additional step - initilizing inner dicts
-        for couple in hosting_couple:
+        random.shuffle(not_hosting_persons)
+        random.shuffle(hosting_couples)
+        
+        # 3. Sort pesons by fewest valid tables available (MRW), order: fewest -> most  
+        minimum_available_values_sort(not_hosting_persons, hosting_couples)
+        
+        # 4. Initilizing inner dicts
+        for couple in hosting_couples:
             assigned[course][couple.couple_id] = []
             couple.person_a.met.add(couple.person_b.person_id)
             couple.person_b.met.add(couple.person_a.person_id)
+        
+        # 5. call backtrack to assign all persons to a table
+        if not backtrack(not_hosting_persons, 0, assigned[course], hosting_couples, couples, course):
+            print(f"FAIL: could not assign all persons for {course.name}")
 
-        # 3. For each individual, assign to a host table where:
-        #     a) Table isn't full (< capacity)
-        #     b) Their partner isn't already at that table
-        #     c) (courses 2+) No one at that table is in their met set
-        for person in not_hosting_person:
-           for couple in hosting_couple:
-               table = assigned[course][couple.couple_id]
-               not_full = len(table) < couple.capacity
-               partner_not_there = get_partner(person, couples).person_id not in [p.person_id for p in table]
-               no_prior_meetings = not met_before(table, person.met)
-               if not_full and partner_not_there and no_prior_meetings:
-                    met_updates(person, table, couples, couple.couple_id)
-                    table.append(person)
-                    person.schedule[course] = couple.couple_id
-                    break
-    
-        # adding visitors to hosts guest set
-        for couple in hosting_couple:
+        # 6. populate guests on each hosting couple
+        for couple in hosting_couples:
             couple.guests = assigned[course][couple.couple_id]
-    
-    # call to validate
-    validate(couples, assigned)
 
+    validate(couples, assigned)
     return couples
+
+# def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
+
+#     def met_before(table: list[Person], met: set[str]) -> bool:
+        
+#         return any([p.person_id in met for p in table])
+
+#     assigned: dict[Course, dict[int, list[Person]]] = {course: {} for course in Course} # Course -> host couple_id -> visiting persons 
+    
+#     for each course
+#     1. Build list of all individuals not hosting that course
+#     2. Shuffle it
+#     3. For each individual, assign to a host table where:
+#         a) Table isn't full (< capacity)
+#         b) Their partner isn't already at that table
+#         c) (courses 2+) No one at that table is in their met set
+    
+#     Finish by populating all hosts guest sets and validating assignments
+
+#     for course in Course:        
+#         build list of all individuals not hosting that course
+#         all = list(couples.values())
+#         not_hosting_person = list() # list of Persons not hosting the course
+#         hosting_couple = list() # list of Couples hosting that course
+#         for c in all:
+#             if c.hosting != course:
+#                 not_hosting_person.append(c.person_a)
+#                 not_hosting_person.append(c.person_b)
+#             else:
+#                 hosting_couple.append(c)
+#         2. Shuffle it
+#         random.shuffle(not_hosting_person)
+#         random.shuffle(hosting_couple)
+
+#         additional step - initilizing inner dicts
+#         for couple in hosting_couple:
+#             assigned[course][couple.couple_id] = []
+#             couple.person_a.met.add(couple.person_b.person_id)
+#             couple.person_b.met.add(couple.person_a.person_id)
+
+#         3. For each individual, assign to a host table where:
+#             a) Table isn't full (< capacity)
+#             b) Their partner isn't already at that table
+#             c) (courses 2+) No one at that table is in their met set
+#         for person in not_hosting_person:
+#            for couple in hosting_couple:
+#                table = assigned[course][couple.couple_id]
+#                not_full = len(table) < couple.capacity
+#                partner_not_there = get_partner(person, couples).person_id not in [p.person_id for p in table]
+#                no_prior_meetings = not met_before(table, person.met)
+#                if not_full and partner_not_there and no_prior_meetings:
+#                     met_updates(person, table, couples, couple.couple_id)
+#                     table.append(person)
+#                     person.schedule[course] = couple.couple_id
+#                     break
+    
+#         adding visitors to hosts guest set
+#         for couple in hosting_couple:
+#             couple.guests = assigned[course][couple.couple_id]
+    
+#     call to validate
+#     validate(couples, assigned)
+
+#     return couples
 
 def print_overall_schedule(couples: dict[int, Couple]) -> None:
     # 1. Overall scehdule (for organizers)
