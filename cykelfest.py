@@ -36,7 +36,7 @@ def assign_hosting(couples: dict[int, Couple]) -> dict[int, Couple]:
     
     return couples             
 
-def validate(couples: dict[int, Couple], assigned: dict[Course, dict[int, list[Person]]]) -> None:
+def validate(couples: dict[int, Couple], assigned: dict[Course, dict[int, list[Person]]]) -> bool:
     errors = []
 
     for course, tables in assigned.items():
@@ -71,38 +71,68 @@ def validate(couples: dict[int, Couple], assigned: dict[Course, dict[int, list[P
             if len(all_met) != len(set(all_met)):
                 errors.append(f"{person.person_id} has duplicate entries in met set")
 
+    # Check that every non-hosting person is assigned to exactly one table per visiting course
+    for couple in couples.values():
+        for person in [couple.person_a, couple.person_b]:
+            if len(person.schedule) > 2:
+                errors.append(f"{person.person_id} is assigned to more than 2 courses")
+            elif len(person.schedule) < 2:
+                errors.append(f"{person.person_id} is assigned to less than 2 courses")
+    
+    # Check that no two persons appear together at more than one course
+    seen_pairs: set[frozenset[str]] = set()
+    for course, tables in assigned.items():
+        for host_id, visitors in tables.items():
+            host = couples[host_id]
+            at_table = visitors + [host.person_a, host.person_b]
+            for i, person in enumerate(at_table):
+                for other_person in at_table[i+1:]:
+                    pair = frozenset({person.person_id, other_person.person_id})
+                    if pair in seen_pairs:
+                        a, b = pair
+                        errors.append(f"{a} and {b} meet at multiple courses")
+                    else:
+                        seen_pairs.add(pair)
+            
+                
+
     if errors:
         for e in errors:
             print(f"FAIL: {e}")
+        return True
     else:
         print("All checks passed!")
+        return False
 
-def met_updates(person: Person, table: list[Person], couples: dict[int, Couple], host_id: int) -> None:
-    
-    # For each person already on the table: add person.person_id to their met set
-    # Add every table member's person_id to person.met
-    # Add both hosts' person_ids to person.met
-    # Add person.person_id to both hosts' met sets
-    
+def met_updates(person: Person, table: list[Person], couples: dict[int, Couple], host_id: int) -> list:
+    added = []
     for p in table:
-        p.met.add(person.person_id)
-        person.met.add(p.person_id)
-        
-    person.met.add(couples[host_id].person_a.person_id)
-    person.met.add(couples[host_id].person_b.person_id)
-    couples[host_id].person_a.met.add(person.person_id)
-    couples[host_id].person_b.met.add(person.person_id)
-    
-def met_undo(person: Person, table: list[Person], couples: dict[int, Couple], host_id: int) -> None:
-    
-    for p in table:
-        p.met.remove(person.person_id)
-        person.met.remove(p.person_id)
-    
-    person.met.remove(couples[host_id].person_a.person_id)
-    person.met.remove(couples[host_id].person_b.person_id)
-    couples[host_id].person_a.met.remove(person.person_id)
-    couples[host_id].person_b.met.remove(person.person_id)
+        if person.person_id not in p.met:
+            p.met.add(person.person_id)
+            added.append((p.met, person.person_id))
+        if p.person_id not in person.met:
+            person.met.add(p.person_id)
+            added.append((person.met, p.person_id))
+
+    host_a = couples[host_id].person_a
+    host_b = couples[host_id].person_b
+    if host_a.person_id not in person.met:
+        person.met.add(host_a.person_id)
+        added.append((person.met, host_a.person_id))
+    if person.person_id not in host_a.met:
+        host_a.met.add(person.person_id)
+        added.append((host_a.met, person.person_id))
+    if host_b.person_id not in person.met:
+        person.met.add(host_b.person_id)
+        added.append((person.met, host_b.person_id))
+    if person.person_id not in host_b.met:
+        host_b.met.add(person.person_id)
+        added.append((host_b.met, person.person_id))
+    return added
+
+def met_undo(added: list) -> None:
+    for met_set, person_id in added:
+        met_set.discard(person_id)
 
 def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
     
@@ -121,25 +151,61 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
         persons[:] = [t[0] for t in available_tables_per_person]
     
     def backtrack(persons: list[Person], index: int, tables: dict[int, list[Person]], hosting_couples: list[Couple], couples: dict[int, Couple], course: Course) -> bool:
+        
+        # Helper function to forwardcheck if there are any persons with no valid tables
+        def has_valid_tables(person: Person, tables: dict[int, list[Person]], hosting_couples: list[Couple], couples: dict[int, Couple]) -> bool:
+
+            for couple in hosting_couples:
+                table = tables[couple.couple_id]
+                not_full = len(table) < couple.capacity
+                partner_not_there = get_partner(person, couples).person_id not in [p.person_id for p in table]
+                no_prior_meetings = (not met_before(table, person.met)
+                                     and couple.person_a.person_id not in person.met
+                                     and couple.person_b.person_id not in person.met)
+                if not_full and partner_not_there and no_prior_meetings:
+                    return True
+
+            return False
+
         if index == len(persons):
             return True
-        
+
         for couple in hosting_couples:
             table = tables[couple.couple_id]
             not_full = len(table) < couple.capacity
             partner_not_there = get_partner(persons[index], couples).person_id not in [p.person_id for p in table]
-            no_prior_meetings = not met_before(table, persons[index].met)
+            no_prior_meetings = (not met_before(table, persons[index].met)
+                                 and couple.person_a.person_id not in persons[index].met
+                                 and couple.person_b.person_id not in persons[index].met)
             if not_full and partner_not_there and no_prior_meetings:
-                met_updates(persons[index], table, couples, couple.couple_id)
+                added = met_updates(persons[index], table, couples, couple.couple_id)
                 table.append(persons[index])
                 persons[index].schedule[course] = couple.couple_id
+
+                # boolean flag
+                forward_ok = True
+
+                # Forward loop check - if any fails then we should undo
+                for person in persons[index+1:]:
+                    if not has_valid_tables(person, tables, hosting_couples, couples):
+                        forward_ok = False
+                        break
+
+                # If not forward ok - undo assignment
+                if not forward_ok:
+                    table.remove(persons[index])
+                    met_undo(added)
+                    del persons[index].schedule[course]
+                    continue
+
+                # Try backwards propagation for next person - if all fails undo assignment
                 if backtrack(persons, index+1, tables, hosting_couples, couples, course):
                     return True
                 else:
                     table.remove(persons[index])
-                    met_undo(persons[index], table, couples, couple.couple_id)
+                    met_undo(added)
                     del persons[index].schedule[course]
-                    
+
         return False
         
     assigned: dict[Course, dict[int, list[Person]]] = {course: {} for course in Course} # Course -> host couple_id -> visiting persons 
@@ -176,72 +242,10 @@ def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
         for couple in hosting_couples:
             couple.guests = assigned[course][couple.couple_id]
 
-    validate(couples, assigned)
-    return couples
-
-# def assign_attendees(couples: dict[int, Couple]) -> dict[int, Couple]:
-
-#     def met_before(table: list[Person], met: set[str]) -> bool:
-        
-#         return any([p.person_id in met for p in table])
-
-#     assigned: dict[Course, dict[int, list[Person]]] = {course: {} for course in Course} # Course -> host couple_id -> visiting persons 
-    
-#     for each course
-#     1. Build list of all individuals not hosting that course
-#     2. Shuffle it
-#     3. For each individual, assign to a host table where:
-#         a) Table isn't full (< capacity)
-#         b) Their partner isn't already at that table
-#         c) (courses 2+) No one at that table is in their met set
-    
-#     Finish by populating all hosts guest sets and validating assignments
-
-#     for course in Course:        
-#         build list of all individuals not hosting that course
-#         all = list(couples.values())
-#         not_hosting_person = list() # list of Persons not hosting the course
-#         hosting_couple = list() # list of Couples hosting that course
-#         for c in all:
-#             if c.hosting != course:
-#                 not_hosting_person.append(c.person_a)
-#                 not_hosting_person.append(c.person_b)
-#             else:
-#                 hosting_couple.append(c)
-#         2. Shuffle it
-#         random.shuffle(not_hosting_person)
-#         random.shuffle(hosting_couple)
-
-#         additional step - initilizing inner dicts
-#         for couple in hosting_couple:
-#             assigned[course][couple.couple_id] = []
-#             couple.person_a.met.add(couple.person_b.person_id)
-#             couple.person_b.met.add(couple.person_a.person_id)
-
-#         3. For each individual, assign to a host table where:
-#             a) Table isn't full (< capacity)
-#             b) Their partner isn't already at that table
-#             c) (courses 2+) No one at that table is in their met set
-#         for person in not_hosting_person:
-#            for couple in hosting_couple:
-#                table = assigned[course][couple.couple_id]
-#                not_full = len(table) < couple.capacity
-#                partner_not_there = get_partner(person, couples).person_id not in [p.person_id for p in table]
-#                no_prior_meetings = not met_before(table, person.met)
-#                if not_full and partner_not_there and no_prior_meetings:
-#                     met_updates(person, table, couples, couple.couple_id)
-#                     table.append(person)
-#                     person.schedule[course] = couple.couple_id
-#                     break
-    
-#         adding visitors to hosts guest set
-#         for couple in hosting_couple:
-#             couple.guests = assigned[course][couple.couple_id]
-    
-#     call to validate
-#     validate(couples, assigned)
-
-#     return couples
+    if validate(couples, assigned):
+        return None
+    else:
+        return couples
 
 def print_overall_schedule(couples: dict[int, Couple]) -> None:
     # 1. Overall scehdule (for organizers)
@@ -323,14 +327,25 @@ def output(couples: dict[int, Couple]) -> None:
     print_stats(couples)
     
 def main():
-    all_couples: dict[int, Couple] = {}
+    MAX_RETRIES = 1000
     
-    all_couples = load_dummy_data()
+    for attempt in range(MAX_RETRIES):
     
-    all_couples = assign_hosting(all_couples)
-    all_couples = assign_attendees(all_couples)
-    output(all_couples)
-
+        all_couples: dict[int, Couple] = {}
+    
+        all_couples = load_dummy_data()
+    
+        all_couples = assign_hosting(all_couples)
+        result = assign_attendees(all_couples)
+        if result is not None:
+            break
+    
+    if result is None:
+        print(f"FAIL: could not find valid assignment after {MAX_RETRIES} retries")
+    else:
+        # output(all_couples)
+        None
+    
     count: dict[Course, int] = {Course.STARTER: 0, Course.MAIN: 0, Course.DESSERT: 0}
     for couple in list(all_couples.values()):
         count[couple.hosting] += 1
